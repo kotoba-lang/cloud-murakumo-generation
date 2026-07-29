@@ -142,3 +142,19 @@
   (is (= 7000 (gen/poll-backoff-ms 5)))
   (is (= 15000 (gen/poll-backoff-ms 100)) "held, so a long video job is not hammered")
   (is (apply <= (map gen/poll-backoff-ms (range 20)))))
+
+(deftest transient-submit-classification
+  (testing "rate limiting and dead hops are worth retrying"
+    (is (gen/transient-submit? 429 nil))
+    (is (gen/transient-submit? 503 nil))
+    (is (gen/transient-submit? 0 nil) "transport failure"))
+  (testing "a 400 that describes a capacity condition is retryable"
+    (is (gen/transient-submit? 400 {:message "upstream connection refused"})))
+  (testing "a 400 that describes a WRONG REQUEST must fail fast — the next
+            attempt would be byte-identical"
+    (is (not (gen/transient-submit? 400 {:message "params.width must be a multiple of 32 in 256..1280"})))
+    (is (not (gen/transient-submit? 400 {:message "params.locale is unsupported"})))
+    (is (not (gen/transient-submit? 400 {:error "invalid-request"}))))
+  (testing "auth is never retried — a bad token stays bad"
+    (is (not (gen/transient-submit? 401 nil)))
+    (is (not (gen/transient-submit? 403 nil)))))

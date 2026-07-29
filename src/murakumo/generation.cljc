@@ -231,6 +231,27 @@
   (let [m (str/lower-case (str (or message "")))]
     (boolean (some #(str/includes? m %) cold-start-signatures))))
 
+(def transient-statuses
+  "HTTP statuses at submit time that mean 'try again', not 'this request is
+  wrong': the fleet is rate limiting or a hop is down."
+  #{0 408 425 429 500 502 503 504})
+
+(defn transient-submit?
+  "A non-2xx submit -> should it be retried rather than degraded?
+
+  Status alone is not enough: the fleet answers 400 both for a genuinely
+  malformed request (bad geometry, unsupported locale — never retry, the next
+  attempt is identical) and, occasionally, for a capacity condition it
+  describes in the body. So look at both, and default a 4xx to NOT retryable
+  so a broken request fails fast."
+  [status body]
+  (boolean
+   (or (contains? transient-statuses (long (or status 0)))
+       (cold-start? (str (or (getv body :message)
+                             (getv body :error)
+                             body))))))
+
+
 (defn poll-backoff-ms
   "Attempt index -> wait before the next status read. Video jobs run tens of
   seconds to minutes (94.6s for a 49-frame ltx-2.3 clip, ADR-2607171100), so

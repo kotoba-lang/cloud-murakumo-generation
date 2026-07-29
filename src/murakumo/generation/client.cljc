@@ -41,14 +41,26 @@
 (def cold-start-wait-ms 45000)
 
 (defn submit!
-  "Job body -> job id, or nil. Fails closed on a 200 that carries no jobId."
+  "Job body -> {:id job-id} | {:cold msg} | {:dead msg}.
+
+  A failed submit is never silent about WHY: the fleet states its constraints
+  in the 400 body (`params.width must be a multiple of 32 in 256..1280`,
+  `params.locale is unsupported`), and dropping that body — as an earlier
+  version of this did — turns a one-line fix into a bisect against a live GPU
+  fleet. It is logged and classified."
   [body {:keys [request! base token]}]
-  (let [{:keys [status body]} (request! "POST" base body token)]
-    (if (<= 200 status 299)
-      (gen/submitted-id body)
-      (do (warn "POST" base "->" status
-                (if (= 401 status) "(token missing, or not generation-scope)" ""))
-          nil))))
+  (let [{:keys [status body] :as resp} (request! "POST" base body token)]
+    (cond
+      (and (<= 200 status 299) (gen/submitted-id body)) {:id (gen/submitted-id body)}
+      (<= 200 status 299) {:dead "accepted but returned no jobId"}
+      :else
+      (let [why (str status " " (or (:message body) (:error body)
+                                    (some-> body pr-str) (:error resp) ""))
+            why (if (= 401 status)
+                  (str why " (token missing, or not generation-scope)") why)]
+        (if (gen/transient-submit? status body)
+          {:cold (str "submit " why)}
+          {:dead (str "submit " why)})))))
 
 (defn await-job!
   "Poll a job to a terminal state. Returns the terminal status body, or nil on
@@ -75,9 +87,11 @@
   "One full round trip. Returns {:ok result} | {:cold msg} | {:dead reason} so
   the caller can tell 'not up yet' from 'will never work'."
   [body out {:keys [download! sha256-hex delete! base token] :as opts}]
-  (if-let [id (submit! body opts)]
-    (let [status (await-job! id opts)]
-      (cond
+  (let [{:keys [id] :as sub} (submit! body opts)]
+    (if-not id
+      (select-keys sub [:cold :dead])
+      (let [status (await-job! id opts)]
+        (cond
         (nil? status) {:dead "no terminal status"}
         (gen/failed? status)
         (let [msg (gen/job-error status)]
@@ -93,8 +107,7 @@
                 (do (when delete! (delete! out))
                     {:dead (str "job " id ": digest mismatch — discarded")})
                 {:ok {:file (str out) :cid (gen/artifact-cid status) :job-id id}})))
-          {:dead (str "job " id " done but produced no artifact")})))
-    {:dead "not accepted by the fleet"}))
+          {:dead (str "job " id " done but produced no artifact")}))))))
 
 (defn generate!
   "Body -> {:file :cid :job-id}, or nil (warned).
