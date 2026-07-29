@@ -67,9 +67,11 @@
   timeout. `:now-ms` lets a caller supply its own clock; the default reads the
   host's. `:timeout-ms` bounds one job so a stuck one cannot hold a whole
   production."
-  [job-id {:keys [request! base token sleep! now-ms timeout-ms]
-           :or {timeout-ms 600000}}]
-  (let [now (or now-ms #(#?(:clj System/currentTimeMillis :cljs js/Date.now)))
+  [job-id {:keys [request! base token sleep! now-ms timeout-ms]}]
+  ;; (or timeout-ms default), not destructuring's :or — a caller merging an
+  ;; opts map that carries :timeout-ms nil would otherwise reach (long nil).
+  (let [timeout-ms (or timeout-ms 600000)
+        now (or now-ms #(#?(:clj System/currentTimeMillis :cljs js/Date.now)))
         url (gen/job-url base job-id)
         deadline (+ (now) (long timeout-ms))]
     (loop [attempt 0]
@@ -114,8 +116,9 @@
 
   `:label` names the step in warnings, so a degraded production says WHICH
   shot lost its image rather than just that something did."
-  [body out {:keys [label sleep! token] :or {label "job"} :as opts}]
-  (cond
+  [body out {:keys [label sleep! token] :as opts}]
+  (let [label (or label "job")]
+   (cond
     (str/blank? (str token)) (do (warn label "skipped — no generation token") nil)
     :else
     (loop [tries-left cold-start-retries]
@@ -127,7 +130,7 @@
                     (quot cold-start-wait-ms 1000) "s")
               (sleep! cold-start-wait-ms)
               (recur (dec tries-left)))
-          :else (do (warn label (or (:dead r) (:cold r))) nil))))))
+          :else (do (warn label (or (:dead r) (:cold r))) nil)))))))
 
 ;; ── the four production steps ───────────────────────────────────────────────
 

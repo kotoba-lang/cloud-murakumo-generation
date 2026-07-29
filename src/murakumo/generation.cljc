@@ -118,23 +118,32 @@
   "A line of narration or dialogue. :voice carries the caller's role hint so a
   cast stays distinguishable; an unmapped role sends no voice at all rather
   than guessing one."
-  [{:keys [text voice locale model] :or {locale default-locale}}]
+  [{:keys [text voice locale model]}]
   (prune
    {:type "voice"
     :model model
     :input {:text text}
-    :params (prune {:locale locale :voice voice})}))
+    ;; `(or locale default-locale)`, NOT destructuring's :or — :or only fires
+    ;; when the key is ABSENT, and a caller that forwards an optional argument
+    ;; (`{:locale locale}` with locale nil) supplies the key with a nil value.
+    ;; The default would then be skipped, prune would drop the field, and the
+    ;; fleet answers `params.locale is unsupported` for a MISSING locale. That
+    ;; is exactly how narration silently fell back to local TTS for two runs.
+    :params (prune {:locale (or locale default-locale) :voice voice})}))
 
 (defn sound-body
   "A music bed or a one-shot effect. `kind` is :music or :sfx — the API
   discriminates on `sound_kind` and only \"music\" selects the music
   function, so anything else is dispatched as sfx by the server."
-  [{:keys [prompt kind seconds loop? model] :or {kind :sfx}}]
+  [{:keys [prompt kind seconds loop? model]}]
   (prune
    {:type "sound"
     :model model
     :input {:prompt prompt}
-    :params (prune {:sound_kind (name kind)
+    ;; `(or kind :sfx)` rather than destructuring's :or — see voice-body: a
+    ;; caller forwarding an absent optional argument supplies the key as nil,
+    ;; :or does not fire, and (name nil) would throw instead of defaulting.
+    :params (prune {:sound_kind (name (or kind :sfx))
                     :duration_ms (when seconds (ms seconds))
                     :loop (boolean loop?)})}))
 

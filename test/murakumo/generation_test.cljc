@@ -158,3 +158,25 @@
   (testing "auth is never retried — a bad token stays bad"
     (is (not (gen/transient-submit? 401 nil)))
     (is (not (gen/transient-submit? 403 nil)))))
+
+(deftest locale-default-survives-an-explicit-nil
+  (testing "a caller forwarding an absent optional argument still gets a locale"
+    ;; The fleet rejects a MISSING locale ("params.locale is unsupported"), and
+    ;; destructuring's :or does not fire for a key present with a nil value —
+    ;; which is what `{:locale locale}` produces when the caller has none.
+    (is (= "ja-JP" (get-in (gen/voice-body {:text "t" :locale nil}) [:params :locale])))
+    (is (= "ja-JP" (get-in (gen/voice-body {:text "t"}) [:params :locale])))
+    (is (= "ja-JP" (get-in (gen/voice-body {:text "t" :locale nil :voice nil :model nil})
+                           [:params :locale])))
+    (is (contains? (:params (gen/voice-body {:text "t" :locale nil})) :locale)
+        "the field must survive prune — an absent locale is a 400")))
+
+(deftest optional-arguments-forwarded-as-nil-still-default
+  (testing "sound kind — (name nil) would throw, not default"
+    (is (= "sfx" (get-in (gen/sound-body {:prompt "p" :kind nil}) [:params :sound_kind])))
+    (is (= "music" (get-in (gen/sound-body {:prompt "p" :kind :music}) [:params :sound_kind]))))
+  (testing "every optional field a consumer might forward as nil is safe"
+    (is (map? (gen/voice-body {:text "t" :voice nil :locale nil :model nil})))
+    (is (map? (gen/sound-body {:prompt "p" :kind nil :seconds nil :model nil})))
+    (is (map? (gen/video-body {:prompt "p" :seconds nil :width nil :height nil
+                               :seed nil :model nil :image-url nil})))))
